@@ -1,0 +1,15 @@
+{
+  "watchlist": [
+    {"username": "nikitabier", "topics": ["growth", "product"], "priority": 1},
+    {"username": "mert", "topics": ["solana", "infrastructure"], "priority": 1},
+    {"username": "CoinDesk", "topics": ["news", "markets"], "priority": 2},
+    {"username": "gregisenberg", "topics": ["startups", "building"], "priority": 1},
+    {"username": "naiivememe", "topics": ["memes", "culture"], "priority": 2},
+    {"username": "naval", "topics": ["philosophy", "investing"], "priority": 1},
+    {"username": "AlexIsBuilding", "topics": ["building", "crypto"], "priority": 2},
+    {"username": "Deebs_DeFi", "topics": ["defi", "yield"], "priority": 1},
+    {"username": "hooeem", "topics": ["trading", "analysis"], "priority": 2},
+    {"username": "blocmates", "topics": ["defi", "tutorials"], "priority": 2},
+    {"username": "CryptoGirlNova", "topics": ["trading", "analysis"], "priority": 2}
+  ]
+}

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Content Machine{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="stats-grid">
+    <div class="stat-card pending">
+        <div class="number">{{ stats.pending }}</div>
+        <div class="label">Pending Review</div>
+    </div>
+    <div class="stat-card approved">
+        <div class="number">{{ stats.approved }}</div>
+        <div class="label">Approved</div>
+    </div>
+    <div class="stat-card posted">
+        <div class="number">{{ stats.posted }}</div>
+        <div class="label">Posted</div>
+    </div>
+    <div class="stat-card rejected">
+        <div class="number">{{ stats.rejected }}</div>
+        <div class="label">Rejected</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.total }}</div>
+        <div class="label">Total Items</div>
+    </div>
+</div>
+
+{% if pending %}
+<div class="card">
+    <div class="flex justify-between items-center mb-4">
+        <h2>Recent Pending</h2>
+        <a href="/queue?status=pending" class="btn btn-secondary btn-small">View All</a>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Topic</th>
+                <th>Type</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in pending %}
+            <tr>
+                <td>#{{ item.id }}</td>
+                <td class="truncate">{{ item.source_topic }}</td>
+                <td><span class="status-badge status-pending">{{ item.content_type }}</span></td>
+                <td class="text-muted text-small">{{ item.created_at.strftime('%b %d, %H:%M') }}</td>
+                <td>
+                    <a href="/review/{{ item.id }}" class="btn btn-primary btn-small">Review</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card">
+    <p class="text-muted">No pending items to review. Run a scan to generate content.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Queue - Content Machine{% endblock %}
+
+{% block content %}
+<h1>Content Queue</h1>
+
+<div class="tabs">
+    {% for status in statuses %}
+    <a href="/queue?status={{ status }}" class="tab {% if status == current_status %}active{% endif %}">
+        {{ status|capitalize }}
+    </a>
+    {% endfor %}
+</div>
+
+{% if items %}
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Topic</th>
+                <th>Type</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>#{{ item.id }}</td>
+                <td class="truncate">{{ item.source_topic }}</td>
+                <td>{{ item.content_type }}</td>
+                <td class="text-muted text-small">{{ item.created_at.strftime('%b %d, %H:%M') }}</td>
+                <td class="flex gap-2">
+                    <a href="/review/{{ item.id }}" class="btn btn-primary btn-small">Review</a>
+                    {% if item.status == 'pending' %}
+                    <form action="/approve/{{ item.id }}" method="post" style="display:inline;">
+                        <button type="submit" class="btn btn-success btn-small">Approve</button>
+                    </form>
+                    <form action="/reject/{{ item.id }}" method="post" style="display:inline;">
+                        <button type="submit" class="btn btn-danger btn-small">Reject</button>
+                    </form>
+                    {% elif item.status == 'approved' %}
+                    <form action="/mark-posted/{{ item.id }}" method="post" style="display:inline;">
+                        <button type="submit" class="btn btn-secondary btn-small">Mark Posted</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card">
+    <p class="text-muted">No {{ current_status }} items found.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,43 @@
+{
+  "rss_feeds": [
+    {
+      "name": "CoinDesk",
+      "url": "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
+      "fallback_url": "https://www.coindesk.com/feed",
+      "priority": 1
+    },
+    {
+      "name": "The Block",
+      "url": "https://www.theblock.co/rss.xml",
+      "fallback_url": null,
+      "priority": 1
+    },
+    {
+      "name": "Decrypt",
+      "url": "https://decrypt.co/feed",
+      "fallback_url": null,
+      "priority": 2
+    },
+    {
+      "name": "Cointelegraph",
+      "url": "https://cointelegraph.com/rss",
+      "fallback_url": null,
+      "priority": 2
+    }
+  ],
+  "news_queries": [
+    "(crypto AND privacy)",
+    "(defi OR DeFi)",
+    "(ethereum OR bitcoin) AND regulation",
+    "web3 infrastructure",
+    "zero knowledge proofs",
+    "crypto compliance"
+  ],
+  "rate_limits": {
+    "coingecko_delay_seconds": 2.0,
+    "newsapi_delay_seconds": 1.5,
+    "rss_delay_seconds": 0.5,
+    "max_retries": 3,
+    "backoff_multiplier": 2
+  }
+}

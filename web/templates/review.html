@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+
+{% block title %}Review #{{ item.id }} - Content Machine{% endblock %}
+
+{% block content %}
+<style>
+    .review-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .review-header h1 {
+        margin-bottom: 4px;
+    }
+
+    .personas-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    @media (max-width: 900px) {
+        .personas-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .persona-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .persona-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        font-weight: 600;
+    }
+
+    .persona-header.pro { background: rgba(88, 166, 255, 0.1); color: var(--accent); }
+    .persona-header.work { background: rgba(63, 185, 80, 0.1); color: var(--green); }
+    .persona-header.degen { background: rgba(163, 113, 247, 0.1); color: var(--purple); }
+
+    .persona-content {
+        padding: 16px;
+    }
+
+    .content-text {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin-bottom: 12px;
+        font-size: 15px;
+        line-height: 1.6;
+    }
+
+    .char-count {
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+
+    .char-count.over { color: var(--red); }
+
+    .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 12px;
+    }
+
+    .tag {
+        background: var(--border);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+    }
+
+    .image-prompt {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+    }
+
+    .image-prompt-label {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+    }
+
+    .image-prompt-text {
+        font-size: 13px;
+        color: var(--text-muted);
+        font-style: italic;
+    }
+
+    .source-info {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 24px;
+    }
+
+    .source-info h3 {
+        margin-bottom: 8px;
+    }
+
+    .actions-bar {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+    }
+
+    textarea {
+        width: 100%;
+        min-height: 120px;
+        padding: 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 14px;
+        resize: vertical;
+    }
+
+    textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+
+    .edit-section {
+        margin-top: 32px;
+        padding-top: 24px;
+        border-top: 1px solid var(--border);
+    }
+
+    .edit-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+        .edit-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .edit-field label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 500;
+    }
+</style>
+
+<div class="review-header">
+    <div>
+        <h1>Review #{{ item.id }}</h1>
+        <p class="text-muted">{{ item.created_at.strftime('%B %d, %Y at %H:%M') }}</p>
+    </div>
+    <div class="flex gap-2">
+        {% if item.status == 'pending' %}
+        <form action="/approve/{{ item.id }}" method="post" style="display:inline;">
+            <button type="submit" class="btn btn-success">Approve</button>
+        </form>
+        <form action="/reject/{{ item.id }}" method="post" style="display:inline;">
+            <button type="submit" class="btn btn-danger">Reject</button>
+        </form>
+        {% elif item.status == 'approved' %}
+        <form action="/mark-posted/{{ item.id }}" method="post" style="display:inline;">
+            <button type="submit" class="btn btn-primary">Mark as Posted</button>
+        </form>
+        {% endif %}
+        <a href="/queue" class="btn btn-secondary">Back to Queue</a>
+    </div>
+</div>
+
+<div class="source-info">
+    <h3>Source</h3>
+    <p><strong>Topic:</strong> {{ item.source_topic }}</p>
+    <p><strong>Type:</strong> {{ item.content_type }}</p>
+    {% if item.source_url %}
+    <p><strong>URL:</strong> <a href="{{ item.source_url }}" target="_blank" style="color: var(--accent);">{{ item.source_url[:60] }}{% if item.source_url|length > 60 %}...{% endif %}</a></p>
+    {% endif %}
+    {% if item.topic_summary %}
+    <p class="mt-4"><strong>Summary:</strong> {{ item.topic_summary }}</p>
+    {% endif %}
+</div>
+
+<div class="personas-grid">
+    <!-- PRO -->
+    <div class="persona-card">
+        <div class="persona-header pro">PRO (Head of BD)</div>
+        <div class="persona-content">
+            <div class="content-text">{{ item.pro_content }}</div>
+            <div class="char-count {% if item.pro_content|length > 280 %}over{% endif %}">
+                {{ item.pro_content|length }}/280 characters
+            </div>
+            {% if pro_thread %}
+            <div class="tags mt-4">
+                <span class="text-muted text-small">Thread ({{ pro_thread|length }} parts)</span>
+            </div>
+            {% endif %}
+            {% if item.pro_image_prompt %}
+            <div class="image-prompt">
+                <div class="image-prompt-label">Image Prompt</div>
+                <div class="image-prompt-text">{{ item.pro_image_prompt }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- WORK -->
+    <div class="persona-card">
+        <div class="persona-header work">WORK (Alpha Hunter)</div>
+        <div class="persona-content">
+            <div class="content-text">{{ item.work_content }}</div>
+            <div class="char-count {% if item.work_content|length > 280 %}over{% endif %}">
+                {{ item.work_content|length }}/280 characters
+            </div>
+            {% if work_cashtags %}
+            <div class="tags">
+                {% for tag in work_cashtags %}
+                <span class="tag">{{ tag }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if work_thread %}
+            <div class="tags mt-4">
+                <span class="text-muted text-small">Thread ({{ work_thread|length }} parts)</span>
+            </div>
+            {% endif %}
+            {% if item.work_image_prompt %}
+            <div class="image-prompt">
+                <div class="image-prompt-label">Image Prompt</div>
+                <div class="image-prompt-text">{{ item.work_image_prompt }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- DEGEN -->
+    <div class="persona-card">
+        <div class="persona-header degen">DEGEN (Vibe Coder)</div>
+        <div class="persona-content">
+            <div class="content-text">{{ item.degen_content }}</div>
+            <div class="char-count {% if item.degen_content|length > 280 %}over{% endif %}">
+                {{ item.degen_content|length }}/280 characters
+            </div>
+            {% if degen_thread %}
+            <div class="tags mt-4">
+                <span class="text-muted text-small">Thread ({{ degen_thread|length }} parts)</span>
+            </div>
+            {% endif %}
+            {% if item.degen_image_prompt %}
+            <div class="image-prompt">
+                <div class="image-prompt-label">Image Prompt</div>
+                <div class="image-prompt-text">{{ item.degen_image_prompt }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if item.engagement_notes %}
+<div class="card">
+    <h3>Engagement Notes</h3>
+    <p>{{ item.engagement_notes }}</p>
+</div>
+{% endif %}
+
+<div class="edit-section">
+    <h2>Edit Content</h2>
+    <form action="/edit/{{ item.id }}" method="post">
+        <div class="edit-grid">
+            <div class="edit-field">
+                <label for="pro_content">PRO</label>
+                <textarea name="pro_content" id="pro_content">{{ item.pro_content }}</textarea>
+            </div>
+            <div class="edit-field">
+                <label for="work_content">WORK</label>
+                <textarea name="work_content" id="work_content">{{ item.work_content }}</textarea>
+            </div>
+            <div class="edit-field">
+                <label for="degen_content">DEGEN</label>
+                <textarea name="degen_content" id="degen_content">{{ item.degen_content }}</textarea>
+            </div>
+        </div>
+        <div class="actions-bar">
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+    </form>
+</div>
+
+<script>
+// Live character count
+document.querySelectorAll('textarea').forEach(textarea => {
+    textarea.addEventListener('input', function() {
+        const count = this.value.length;
+        // Could add live counter here
+    });
+});
+</script>
+{% endblock %}
