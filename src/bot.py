@@ -503,5 +503,9 @@ async def send_notification(message: str):
             logger.error(f"Failed to send notification to {chat_id}: {e}")
 
 
+# Alias for convenience
+notify = send_notification
+
+
 if __name__ == "__main__":
     ContentBot().run()
