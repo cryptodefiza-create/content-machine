@@ -694,6 +694,15 @@ class ContentBot:
         root = get_project_root()
         lock_path = root / "data" / "bot.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
+        if lock_path.exists():
+            try:
+                pid_text = lock_path.read_text().strip()
+                if pid_text.isdigit():
+                    pid = int(pid_text)
+                    if not self._pid_alive(pid):
+                        lock_path.unlink()
+            except Exception:
+                pass
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             with os.fdopen(fd, "w") as f:
@@ -710,6 +719,14 @@ class ContentBot:
                 self._lock_path.unlink()
             except Exception:
                 pass
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            return False
 
 
 async def send_notification(message: str, chat_ids: Optional[List[int]] = None):
