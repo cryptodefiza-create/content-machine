@@ -19,6 +19,7 @@ env/
 *.sqlite
 *.sqlite3
 data/*.db
+data/exports/
 
 # IDE
 .idea/
