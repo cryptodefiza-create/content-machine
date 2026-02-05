@@ -104,6 +104,7 @@ Single source of truth: `config/settings.json`
 - Health check endpoint: `/health`
 - Health endpoint auth: set `HEALTH_SECRET` and pass `X-Health-Token` header
 - Optional Telegram health alert: set `HEALTH_ALERT_CHAT_ID` to receive startup health status
+- Morning health ping: sent daily at 07:00 (server time) if `HEALTH_ALERT_CHAT_ID` is set
 - Optional digest override: set `TREND_DIGEST_CHAT_ID` to send to a specific chat
 
 ## Tests

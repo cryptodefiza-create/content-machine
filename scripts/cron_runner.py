@@ -224,6 +224,7 @@ class ContentScanner:
         logger.info("Scheduler (UTC): scans 06/10/13, summary+trends 14:30, expiry 22:00")
 
         schedule.every().day.at("06:00").do(self.run_scan)
+        schedule.every().day.at("07:00").do(lambda: asyncio.run(self.send_health_alert()))
         schedule.every().day.at("10:00").do(self.run_scan)
         schedule.every().day.at("13:00").do(self.run_scan)
         schedule.every().day.at("14:30").do(lambda: asyncio.run(self.send_summary_with_trends()))
