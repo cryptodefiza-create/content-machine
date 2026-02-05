@@ -102,6 +102,7 @@ Single source of truth: `config/settings.json`
 - Google Sheets export (optional): set `GOOGLE_SHEETS_SPREADSHEET_ID` and service account creds to append rows
 - Daily combo message (summary + trends) at 14:30 (server time)
 - Health check endpoint: `/health`
+- Health endpoint auth: set `HEALTH_SECRET` and pass `X-Health-Token` header
 - Optional digest override: set `TREND_DIGEST_CHAT_ID` to send to a specific chat
 
 ## Tests

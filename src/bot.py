@@ -118,6 +118,7 @@ class ContentBot:
             "/style <persona> <example> | <topic> - Style transfer draft\n"
             "/trends [N|today|week] - Show trending items\n"
             "/export <run_id> - Export run to CSV/Sheets\n"
+            "/health - Bot health status\n"
             "/queue - List drafts awaiting approval\n"
             "/dryrun on|off - Toggle dry run\n"
             "/react <url> <tweet text> - Generate QT for tweet",
@@ -502,6 +503,22 @@ class ContentBot:
             logger.error(f"Trend digest failed: {e}")
             await update.message.reply_text("❌ Trend digest failed. Try again.")
 
+    async def health(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+        try:
+            db_ok = self.queue.ping()
+        except Exception:
+            db_ok = False
+        dry = get_dry_run(default_dry_run=self.settings["runtime"].get("dry_run", False))
+        lock_status = "active" if self._lock_path and self._lock_path.exists() else "none"
+        await update.message.reply_text(
+            f"✅ Bot is running\n"
+            f"DB: {'ok' if db_ok else 'down'}\n"
+            f"Dry run: {'on' if dry else 'off'}\n"
+            f"Lock: {lock_status}"
+        )
+
     @staticmethod
     def _filter_items_by_window(items, window_hours: int):
         from datetime import datetime, timezone
@@ -685,6 +702,7 @@ class ContentBot:
         self.app.add_handler(CommandHandler("dryrun", self.dryrun))
         self.app.add_handler(CommandHandler("export", self.export))
         self.app.add_handler(CommandHandler("trends", self.trends))
+        self.app.add_handler(CommandHandler("health", self.health))
         self.app.add_handler(CallbackQueryHandler(self.callback))
 
         logger.info("Starting Telegram bot...")

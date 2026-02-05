@@ -26,12 +26,18 @@ class _RedactFilter(logging.Filter):
     def __init__(self, token: str = ""):
         super().__init__()
         self._token = token
+        self._extra_tokens = []
+        if os.getenv("GEMINI_API_KEY"):
+            self._extra_tokens.append(os.getenv("GEMINI_API_KEY", ""))
 
     def filter(self, record: logging.LogRecord) -> bool:
         msg = str(record.getMessage())
         msg = self._token_pattern.sub("bot<redacted>", msg)
         if self._token:
             msg = msg.replace(self._token, "<redacted>")
+        for t in self._extra_tokens:
+            if t:
+                msg = msg.replace(t, "<redacted>")
         record.msg = msg
         record.args = ()
         return True

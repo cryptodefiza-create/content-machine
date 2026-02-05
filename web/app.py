@@ -17,6 +17,7 @@ from src.utils import get_env, logger
 app = FastAPI(title="Content Machine", docs_url=None, redoc_url=None)
 
 DASHBOARD_SECRET = get_env("DASHBOARD_SECRET", "")
+HEALTH_SECRET = get_env("HEALTH_SECRET", "")
 SESSION_COOKIE = "cm_session"
 CSRF_FIELD = "csrf_token"
 
@@ -162,7 +163,11 @@ async def logout(request: Request):
 
 
 @app.get("/health")
-async def health():
+async def health(request: Request):
+    if HEALTH_SECRET:
+        token = request.headers.get("X-Health-Token", "")
+        if not hmac.compare_digest(token, HEALTH_SECRET):
+            raise HTTPException(status_code=401, detail="Unauthorized")
     ok = queue.ping()
     return {"status": "ok" if ok else "degraded", "db": ok}
 
