@@ -165,13 +165,16 @@
     <div class="flex gap-2">
         {% if item.status == 'pending' %}
         <form action="/approve/{{ item.id }}" method="post" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-success">Approve</button>
         </form>
         <form action="/reject/{{ item.id }}" method="post" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-danger">Reject</button>
         </form>
         {% elif item.status == 'approved' %}
         <form action="/mark-posted/{{ item.id }}" method="post" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-primary">Mark as Posted</button>
         </form>
         {% endif %}
@@ -183,6 +186,15 @@
     <h3>Source</h3>
     <p><strong>Topic:</strong> {{ item.source_topic }}</p>
     <p><strong>Type:</strong> {{ item.content_type }}</p>
+    {% if item.run_id %}
+    <p><strong>Run ID:</strong> {{ item.run_id }}</p>
+    {% endif %}
+    {% if item.pipeline_version %}
+    <p><strong>Pipeline:</strong> {{ item.pipeline_version }}</p>
+    {% endif %}
+    {% if item.quality_score %}
+    <p><strong>Quality:</strong> {{ '%.2f'|format(item.quality_score) }}</p>
+    {% endif %}
     {% if item.source_url %}
     <p><strong>URL:</strong> <a href="{{ item.source_url }}" target="_blank" style="color: var(--accent);">{{ item.source_url[:60] }}{% if item.source_url|length > 60 %}...{% endif %}</a></p>
     {% endif %}
@@ -276,6 +288,7 @@
 <div class="edit-section">
     <h2>Edit Content</h2>
     <form action="/edit/{{ item.id }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="edit-grid">
             <div class="edit-field">
                 <label for="pro_content">PRO</label>

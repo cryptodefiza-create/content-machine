@@ -1,5 +1,6 @@
-"""Telegram bot for content approval with authentication"""
+"""Telegram bot for content approval"""
 import asyncio
+import time
 from typing import Optional, List
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
@@ -8,69 +9,80 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
-    filters,
 )
 from telegram.constants import ParseMode
 
-from .utils import get_env, truncate, logger
+from .utils import get_env, truncate, logger, generate_content_hash
 from .queue import QueueManager, ContentStatus
 from .brain import Brain
 from .imagen import ImagePromptGenerator
+from .pipeline import ContentPipeline
+from .scanner import Scanner
+from .exporter import ExportSettings, export_content_items
+from .runtime_config import get_dry_run, set_dry_run
+from .settings import load_settings
+import uuid
+
+
+_PERSONA_DISPLAY = [
+    ("pro", "PRO (Head of BD)", "💼"),
+    ("work", "WORK (Alpha Hunter)", "📊"),
+    ("degen", "DEGEN (Vibe Coder)", "🔥"),
+]
+
+_STATUS_ACTIONS = {
+    "approve": (ContentStatus.APPROVED, "✅", "approved", "approved"),
+    "reject":  (ContentStatus.REJECTED, "❌", "rejected", "rejected"),
+    "posted":  (ContentStatus.POSTED,   "📤", "marked as posted", "marked as posted"),
+}
 
 
 class ContentBot:
-    """
-    Telegram bot for content approval workflow.
 
-    Commands:
-    - /start, /help - Show help
-    - /status - Queue statistics
-    - /pending - List pending drafts
-    - /next - Get next draft for review
-    - /prompts <id> - Get image prompts
-    - /approve <id> - Approve draft
-    - /reject <id> - Reject draft
-    - /posted <id> - Mark as posted
-    - /react <url> - Generate QT for tweet
-    """
-
-    def __init__(self):
+    def __init__(self, pipeline: Optional[ContentPipeline] = None, queue: Optional[QueueManager] = None):
         self.token = get_env("TELEGRAM_BOT_TOKEN")
         self.allowed_chat_ids = self._parse_allowed_chats()
-        self.queue = QueueManager()
-        self._brain: Optional[Brain] = None  # Lazy init
+        self.queue = queue or QueueManager()
+        self._brain: Optional[Brain] = None
+        self._pipeline: Optional[ContentPipeline] = pipeline
+        self._scanner: Optional[Scanner] = None
         self.imagen = ImagePromptGenerator()
         self.app: Optional[Application] = None
-
-        # Rate limiting for /react command
         self.last_react_time = 0
-        self.react_cooldown = 30  # seconds between /react commands
+        self.react_cooldown = 30
+        self.settings = load_settings()
 
     @property
     def brain(self) -> Brain:
-        """Lazy initialization of Brain (requires GEMINI_API_KEY)"""
         if self._brain is None:
             self._brain = Brain()
         return self._brain
 
+    @property
+    def pipeline(self) -> ContentPipeline:
+        if self._pipeline is None:
+            self._pipeline = ContentPipeline(settings=self.settings)
+        return self._pipeline
+
+    @property
+    def scanner(self) -> Scanner:
+        if self._scanner is None:
+            self._scanner = Scanner()
+        return self._scanner
+
     def _parse_allowed_chats(self) -> List[int]:
-        """Parse allowed chat IDs from environment"""
         chat_id_str = get_env("TELEGRAM_CHAT_ID", "")
         if not chat_id_str:
             logger.warning("TELEGRAM_CHAT_ID not set - bot will reject all messages")
             return []
-
         try:
-            # Support comma-separated list of chat IDs
             return [int(cid.strip()) for cid in chat_id_str.split(",")]
         except ValueError as e:
             logger.error(f"Invalid TELEGRAM_CHAT_ID format: {e}")
             return []
 
     async def _check_auth(self, update: Update) -> bool:
-        """Check if user is authorized"""
         chat_id = update.effective_chat.id
-
         if chat_id not in self.allowed_chat_ids:
             logger.warning(f"Unauthorized access attempt from chat_id: {chat_id}")
             await update.message.reply_text(
@@ -82,12 +94,11 @@ class ContentBot:
         return True
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show help message"""
         if not await self._check_auth(update):
             return
 
         await update.message.reply_text(
-            "🤖 *Content Machine v3*\n\n"
+            "🤖 *Content Machine v2*\n\n"
             "*Review Commands:*\n"
             "/status - Queue stats\n"
             "/pending - List drafts\n"
@@ -98,12 +109,29 @@ class ContentBot:
             "/reject <id> - Reject draft\n"
             "/posted <id> - Mark as posted\n\n"
             "*Generate:*\n"
-            "/react <url> - Generate QT for tweet",
+            "/personas - List available personas\n"
+            "/generate <persona> <topic or link> - Generate draft\n"
+            "/batch <persona> <N> <topic> - Generate batch\n"
+            "/style <persona> <example> | <topic> - Style transfer draft\n"
+            "/trends [N|today|week] - Show trending items\n"
+            "/export <run_id> - Export run to CSV/Sheets\n"
+            "/queue - List drafts awaiting approval\n"
+            "/dryrun on|off - Toggle dry run\n"
+            "/react <url> <tweet text> - Generate QT for tweet",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    async def personas(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+        keys = self.pipeline.persona_store.keys()
+        display = ", ".join([f"`{k}`" for k in keys])
+        await update.message.reply_text(
+            f"Available personas: {display}",
             parse_mode=ParseMode.MARKDOWN
         )
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show queue statistics"""
         if not await self._check_auth(update):
             return
 
@@ -121,7 +149,6 @@ class ContentBot:
         )
 
     async def pending(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """List pending drafts"""
         if not await self._check_auth(update):
             return
 
@@ -132,14 +159,15 @@ class ContentBot:
 
         msg = f"📝 *{len(items)} Pending Drafts*\n\n"
         for item in items:
-            topic = truncate(item.source_topic, 45)
-            msg += f"*#{item.id}* - {topic}\n"
+            msg += f"*#{item.id}* - {truncate(item.source_topic, 45)}\n"
         msg += "\n_Use /next to review first draft_"
 
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
+    async def queue_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.pending(update, context)
+
     async def next_draft(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Get next pending draft for review"""
         if not await self._check_auth(update):
             return
 
@@ -151,7 +179,6 @@ class ContentBot:
         await self._send_draft(update.effective_chat.id, items[0])
 
     async def prompts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Get image prompts for a draft"""
         if not await self._check_auth(update):
             return
 
@@ -162,7 +189,6 @@ class ContentBot:
         try:
             item_id = int(context.args[0])
             item = self.queue.get_by_id(item_id)
-
             if item:
                 await self._send_prompts(update.effective_chat.id, item)
             else:
@@ -170,87 +196,52 @@ class ContentBot:
         except ValueError:
             await update.message.reply_text("❌ Invalid ID. Use a number.")
 
-    async def approve(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Approve a draft"""
+    async def _status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
         if not await self._check_auth(update):
             return
 
+        status_enum, emoji, verb, log_verb = _STATUS_ACTIONS[action]
+
         if not context.args:
-            await update.message.reply_text("Usage: `/approve <id>`", parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(f"Usage: `/{action} <id>`", parse_mode=ParseMode.MARKDOWN)
             return
 
         try:
             item_id = int(context.args[0])
-            success = self.queue.update_status(item_id, ContentStatus.APPROVED.value)
-
-            if success:
-                await update.message.reply_text(f"✅ Draft #{item_id} approved!")
-                logger.info(f"Draft #{item_id} approved via Telegram")
+            if self.queue.update_status(item_id, status_enum.value):
+                await update.message.reply_text(f"{emoji} Draft #{item_id} {verb}!")
+                logger.info(f"Draft #{item_id} {log_verb} via Telegram")
             else:
                 await update.message.reply_text(f"❌ Draft #{item_id} not found")
         except ValueError:
             await update.message.reply_text("❌ Invalid ID. Use a number.")
+
+    async def approve(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._status_command(update, context, "approve")
 
     async def reject(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Reject a draft"""
-        if not await self._check_auth(update):
-            return
-
-        if not context.args:
-            await update.message.reply_text("Usage: `/reject <id>`", parse_mode=ParseMode.MARKDOWN)
-            return
-
-        try:
-            item_id = int(context.args[0])
-            success = self.queue.update_status(item_id, ContentStatus.REJECTED.value)
-
-            if success:
-                await update.message.reply_text(f"❌ Draft #{item_id} rejected")
-                logger.info(f"Draft #{item_id} rejected via Telegram")
-            else:
-                await update.message.reply_text(f"❌ Draft #{item_id} not found")
-        except ValueError:
-            await update.message.reply_text("❌ Invalid ID. Use a number.")
+        await self._status_command(update, context, "reject")
 
     async def posted(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Mark a draft as posted"""
-        if not await self._check_auth(update):
-            return
-
-        if not context.args:
-            await update.message.reply_text("Usage: `/posted <id>`", parse_mode=ParseMode.MARKDOWN)
-            return
-
-        try:
-            item_id = int(context.args[0])
-            success = self.queue.update_status(item_id, ContentStatus.POSTED.value)
-
-            if success:
-                await update.message.reply_text(f"📤 Draft #{item_id} marked as posted!")
-                logger.info(f"Draft #{item_id} marked as posted via Telegram")
-            else:
-                await update.message.reply_text(f"❌ Draft #{item_id} not found")
-        except ValueError:
-            await update.message.reply_text("❌ Invalid ID. Use a number.")
+        await self._status_command(update, context, "posted")
 
     async def react(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Generate QT content for a tweet"""
         if not await self._check_auth(update):
             return
 
-        if not context.args:
+        if not context.args or len(context.args) < 2:
             await update.message.reply_text(
-                "Usage: `/react <tweet_url>`\n\n"
+                "Usage: `/react <tweet_url> <tweet text>`\n\n"
                 "Example:\n"
-                "`/react https://x.com/user/status/123`",
+                "`/react https://x.com/user/status/123 Privacy is normal.`",
                 parse_mode=ParseMode.MARKDOWN
             )
             return
 
         url = context.args[0]
+        tweet_text = " ".join(context.args[1:])
 
-        # Validate URL
-        if "x.com" not in url and "twitter.com" not in url:
+        if not self._is_twitter_url(url):
             await update.message.reply_text(
                 "❌ Invalid URL. Must be an X/Twitter link.\n\n"
                 "Example: `https://x.com/user/status/123`",
@@ -258,8 +249,6 @@ class ContentBot:
             )
             return
 
-        # Rate limiting
-        import time
         now = time.time()
         if now - self.last_react_time < self.react_cooldown:
             remaining = int(self.react_cooldown - (now - self.last_react_time))
@@ -269,242 +258,453 @@ class ContentBot:
 
         await update.message.reply_text("🧠 Generating QT content...")
 
-        # Extract username from URL
         username = self._extract_username(url)
 
-        # Note: We can't fetch the actual tweet content without X API
-        # Using placeholder - user should paste the tweet content if needed
-        content = self.brain.generate_qt_content({
-            "username": username,
-            "content": f"[Tweet from @{username} - paste actual content for better results]",
-            "url": url
-        })
+        topic_data = {
+            "type": "kol_qt",
+            "source": f"@{username}",
+            "topic": f"QT @{username}",
+            "details": {"content": tweet_text},
+            "url": url,
+            "content_hash": generate_content_hash(url + tweet_text),
+        }
 
-        if content:
-            try:
-                item = self.queue.add_content(content)
+        result = self.pipeline.run(topic_data)
+        if result.content_pack:
+            if result.dry_run:
+                await update.message.reply_text("🧪 Dry run enabled. Draft not queued.")
+                await self._send_draft_preview(update.effective_chat.id, result)
+            else:
+                item = self.queue.get_pending(limit=1)[0]
                 await update.message.reply_text(f"✅ Created draft #{item.id}")
                 await self._send_draft(update.effective_chat.id, item)
-                logger.info(f"Generated QT content for @{username}, draft #{item.id}")
-            except Exception as e:
-                logger.error(f"Failed to save QT content: {e}")
-                await update.message.reply_text("❌ Failed to save draft")
+            logger.info(f"Generated QT content for @{username}, run {result.run_id}")
         else:
             await update.message.reply_text("❌ Generation failed. Try again.")
 
-    def _extract_username(self, url: str) -> str:
-        """Extract username from X/Twitter URL"""
+    async def generate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+        if len(context.args) < 2:
+            await update.message.reply_text("Usage: `/generate <persona> <topic or link>`", parse_mode=ParseMode.MARKDOWN)
+            return
+
+        persona = context.args[0].lower()
+        topic = " ".join(context.args[1:]).strip()
+        topic = " ".join(topic.split())
+        if not topic:
+            await update.message.reply_text("❌ Topic is empty. Try `/generate <persona> <topic>`.", parse_mode=ParseMode.MARKDOWN)
+            return
+        if len(topic) > 500:
+            await update.message.reply_text("❌ Topic too long (max 500 chars).")
+            return
+        if persona not in self.pipeline.persona_store.keys():
+            await update.message.reply_text(f"❌ Unknown persona: {persona}. Use /personas to list.")
+            return
+
+        await update.message.reply_text("🧠 Generating draft...")
+        topic_data = {
+            "topic": topic,
+            "type": "manual",
+            "source": "telegram",
+            "content_hash": f"{generate_content_hash(topic)}-{uuid.uuid4().hex[:6]}",
+        }
+        result = self.pipeline.run(topic_data, personas=[persona])
+        if result.content_pack:
+            if result.dry_run:
+                await update.message.reply_text("🧪 Dry run enabled. Draft not queued.")
+                await self._send_draft_preview(update.effective_chat.id, result)
+            else:
+                item = self.queue.get_pending(limit=1)[0]
+                await update.message.reply_text(f"✅ Created draft #{item.id}")
+                await self._send_draft(update.effective_chat.id, item)
+        else:
+            await update.message.reply_text("❌ Generation failed.")
+
+    async def style(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+        if len(context.args) < 3:
+            await update.message.reply_text(
+                "Usage: `/style <persona> <example> | <topic>`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        persona = context.args[0].lower()
+        if persona not in self.pipeline.persona_store.keys():
+            await update.message.reply_text(f"❌ Unknown persona: {persona}. Use /personas to list.")
+            return
+
+        raw = " ".join(context.args[1:]).strip()
+        if "|" not in raw:
+            await update.message.reply_text("❌ Missing `|` separator. Example: `/style pro <example> | <topic>`", parse_mode=ParseMode.MARKDOWN)
+            return
+        example, topic = [part.strip() for part in raw.split("|", 1)]
+        if not example or not topic:
+            await update.message.reply_text("❌ Both example and topic are required.")
+            return
+        if len(example) > 500 or len(topic) > 500:
+            await update.message.reply_text("❌ Example/topic too long (max 500 chars each).")
+            return
+
+        await update.message.reply_text("🧠 Generating style-transfer draft...")
+        topic_data = {
+            "topic": topic,
+            "type": "manual",
+            "source": "telegram",
+            "details": {"style_example": example},
+            "content_hash": f"{generate_content_hash(topic + example)}-{uuid.uuid4().hex[:6]}",
+        }
+        result = self.pipeline.run(topic_data, personas=[persona])
+        if result.content_pack:
+            if result.dry_run:
+                await update.message.reply_text("🧪 Dry run enabled. Draft not queued.")
+                await self._send_draft_preview(update.effective_chat.id, result)
+            else:
+                item = self.queue.get_pending(limit=1)[0]
+                await update.message.reply_text(f"✅ Created draft #{item.id}")
+                await self._send_draft(update.effective_chat.id, item)
+        else:
+            await update.message.reply_text("❌ Generation failed.")
+
+    async def batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+        if len(context.args) < 3:
+            await update.message.reply_text("Usage: `/batch <persona> <N> <topic>`", parse_mode=ParseMode.MARKDOWN)
+            return
+        persona = context.args[0].lower()
+        if persona not in self.pipeline.persona_store.keys():
+            await update.message.reply_text(f"❌ Unknown persona: {persona}. Use /personas to list.")
+            return
         try:
-            # Handle both x.com and twitter.com
-            url = url.replace("https://", "").replace("http://", "")
-            parts = url.split("/")
-            if len(parts) >= 2:
-                return parts[1].split("?")[0]
+            count = int(context.args[1])
+        except ValueError:
+            await update.message.reply_text("❌ N must be a number")
+            return
+        if count < 1 or count > 5:
+            await update.message.reply_text("❌ N must be between 1 and 5.")
+            return
+        topic = " ".join(context.args[2:]).strip()
+        topic = " ".join(topic.split())
+        if not topic:
+            await update.message.reply_text("❌ Topic is empty.")
+            return
+        if len(topic) > 500:
+            await update.message.reply_text("❌ Topic too long (max 500 chars).")
+            return
+
+        await update.message.reply_text(f"🧠 Generating batch ({count})...")
+        created = 0
+        for i in range(count):
+            topic_data = {
+                "topic": topic,
+                "type": "manual",
+                "source": "telegram",
+                "content_hash": f"{generate_content_hash(topic)}-{uuid.uuid4().hex[:6]}-{i}",
+            }
+            result = self.pipeline.run(topic_data, personas=[persona])
+            if result.content_pack:
+                created += 1
+                if result.dry_run:
+                    await self._send_draft_preview(update.effective_chat.id, result)
+
+        if created == 0:
+            await update.message.reply_text("❌ No drafts generated.")
+        elif get_dry_run(default_dry_run=self.settings["runtime"].get("dry_run", False)):
+            await update.message.reply_text(f"🧪 Dry run: generated {created} drafts, none queued.")
+        else:
+            await update.message.reply_text(f"✅ Generated {created} drafts. Use /next to review.")
+
+    async def dryrun(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+        if not context.args:
+            status = get_dry_run(default_dry_run=self.settings["runtime"].get("dry_run", False))
+            await update.message.reply_text(f"Dry run is {'ON' if status else 'OFF'}")
+            return
+        value = context.args[0].lower()
+        if value not in ("on", "off"):
+            await update.message.reply_text("Usage: `/dryrun on|off`", parse_mode=ParseMode.MARKDOWN)
+            return
+        enabled = value == "on"
+        set_dry_run(enabled)
+        await update.message.reply_text(f"Dry run set to {'ON' if enabled else 'OFF'}")
+
+    async def export(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: `/export <run_id>`", parse_mode=ParseMode.MARKDOWN)
+            return
+        run_id = context.args[0].strip()
+        if len(run_id) < 6:
+            await update.message.reply_text("❌ Invalid run_id.")
+            return
+
+        items = self.queue.get_by_run_id(run_id)
+        if not items:
+            await update.message.reply_text(f"❌ No drafts found for run_id {run_id}")
+            return
+
+        export_cfg = self.settings.get("exports", {})
+        settings = ExportSettings(
+            enabled=bool(export_cfg.get("enabled", True)),
+            export_dir=str(export_cfg.get("export_dir", "data/exports")),
+            format=str(export_cfg.get("format", "csv")),
+            master_csv=bool(export_cfg.get("master_csv", True)),
+            master_csv_path=str(export_cfg.get("master_csv_path", "data/exports/all_runs.csv")),
+        )
+        export_content_items(settings, items)
+        await update.message.reply_text(f"✅ Exported run {run_id}")
+
+    async def trends(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+        await update.message.reply_text("🔎 Fetching trend digest...")
+        try:
+            items = self.scanner.scan_all(max_items=20)
+            if not items:
+                await update.message.reply_text("📡 No items found.")
+                return
+            count = 10
+            window_hours = None
+            for token in context.args:
+                t = token.lower()
+                if t.isdigit():
+                    count = max(1, min(int(t), 20))
+                elif t in ("today", "day", "24h"):
+                    window_hours = 24
+                elif t in ("week", "7d"):
+                    window_hours = 168
+
+            if window_hours is not None:
+                items = self._filter_items_by_window(items, window_hours)
+
+            top = items[:count]
+            label = f"Top {len(top)}"
+            if window_hours == 24:
+                label += " (Today)"
+            elif window_hours == 168:
+                label += " (This Week)"
+
+            lines = [f"🔥 *Trend Digest {label}*", ""]
+            for idx, item in enumerate(top, start=1):
+                score = item.get("trend_score", 0)
+                title = truncate(item.get("topic", ""), 90)
+                source = item.get("source", "unknown")
+                lines.append(f"{idx}. ({score}) {title} — _{source}_")
+            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.error(f"Trend digest failed: {e}")
+            await update.message.reply_text("❌ Trend digest failed. Try again.")
+
+    @staticmethod
+    def _filter_items_by_window(items, window_hours: int):
+        from datetime import datetime, timezone
+        cutoff = datetime.now(timezone.utc)
+        filtered = []
+        for item in items:
+            ts = item.get("published_at") or item.get("scanned_at")
+            try:
+                if ts:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    delta = cutoff - dt
+                    if delta.total_seconds() <= window_hours * 3600:
+                        filtered.append(item)
+            except Exception:
+                continue
+        return filtered
+
+    @staticmethod
+    def _is_twitter_url(url: str) -> bool:
+        from urllib.parse import urlparse
+        try:
+            host = urlparse(url).hostname or ""
+            return host in ("x.com", "www.x.com", "twitter.com", "www.twitter.com")
+        except Exception:
+            return False
+
+    @staticmethod
+    def _extract_username(url: str) -> str:
+        from urllib.parse import urlparse
+        try:
+            path = urlparse(url).path.strip("/")
+            if path:
+                return path.split("/")[0]
         except Exception:
             pass
         return "unknown"
 
     async def callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle inline keyboard callbacks"""
         query = update.callback_query
         await query.answer()
 
-        # Check auth for callbacks too
         if query.message.chat_id not in self.allowed_chat_ids:
             await query.edit_message_text("⛔ Unauthorized")
             return
 
-        data = query.data
-
         try:
-            if data.startswith("approve_"):
-                item_id = int(data.split("_")[1])
-                self.queue.update_status(item_id, ContentStatus.APPROVED.value)
-                await query.edit_message_text(f"✅ Draft #{item_id} approved!")
-                logger.info(f"Draft #{item_id} approved via callback")
+            action, item_id_str = query.data.split("_", 1)
+            item_id = int(item_id_str)
 
-            elif data.startswith("reject_"):
-                item_id = int(data.split("_")[1])
-                self.queue.update_status(item_id, ContentStatus.REJECTED.value)
-                await query.edit_message_text(f"❌ Draft #{item_id} rejected")
-                logger.info(f"Draft #{item_id} rejected via callback")
-
-            elif data.startswith("prompts_"):
-                item_id = int(data.split("_")[1])
+            if action in _STATUS_ACTIONS:
+                status_enum, emoji, verb, log_verb = _STATUS_ACTIONS[action]
+                self.queue.update_status(item_id, status_enum.value)
+                await query.edit_message_text(f"{emoji} Draft #{item_id} {verb}!")
+                logger.info(f"Draft #{item_id} {log_verb} via callback")
+            elif action == "prompts":
                 item = self.queue.get_by_id(item_id)
                 if item:
                     await self._send_prompts(query.message.chat_id, item)
                 else:
                     await query.message.reply_text(f"❌ Draft #{item_id} not found")
 
-            elif data.startswith("posted_"):
-                item_id = int(data.split("_")[1])
-                self.queue.update_status(item_id, ContentStatus.POSTED.value)
-                await query.edit_message_text(f"📤 Draft #{item_id} marked as posted!")
-                logger.info(f"Draft #{item_id} marked as posted via callback")
-
         except Exception as e:
             logger.error(f"Callback error: {e}")
             await query.message.reply_text("❌ Action failed")
 
     async def _send_draft(self, chat_id: int, item):
-        """Send draft content as separate messages for easy copying"""
-        # Header
-        await self.app.bot.send_message(
-            chat_id,
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📝 *Draft #{item.id}*\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📰 {truncate(item.source_topic, 100)}",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        try:
+            await self.app.bot.send_message(
+                chat_id,
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📝 *Draft #{item.id}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📰 {truncate(item.source_topic, 100)}\n"
+                f"🔎 Run: `{item.run_id or 'n/a'}`",
+                parse_mode=ParseMode.MARKDOWN
+            )
 
-        # Small delay to prevent rate limiting
-        await asyncio.sleep(0.3)
-
-        # PRO post
-        await self.app.bot.send_message(
-            chat_id,
-            f"💼 *PRO (Head of BD)*\n\n"
-            f"`{item.pro_content}`",
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-        await asyncio.sleep(0.3)
-
-        # WORK post
-        await self.app.bot.send_message(
-            chat_id,
-            f"📊 *WORK (Alpha Hunter)*\n\n"
-            f"`{item.work_content}`",
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-        await asyncio.sleep(0.3)
-
-        # DEGEN post
-        await self.app.bot.send_message(
-            chat_id,
-            f"🔥 *DEGEN (Vibe Coder)*\n\n"
-            f"`{item.degen_content}`",
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-        await asyncio.sleep(0.3)
-
-        # Action buttons
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Approve", callback_data=f"approve_{item.id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"reject_{item.id}"),
-            ],
-            [
-                InlineKeyboardButton("🎨 Prompts", callback_data=f"prompts_{item.id}"),
-                InlineKeyboardButton("📤 Posted", callback_data=f"posted_{item.id}"),
-            ]
-        ]
-
-        await self.app.bot.send_message(
-            chat_id,
-            "*Actions:*",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-    async def _send_prompts(self, chat_id: int, item):
-        """Send image prompts for manual generation"""
-        prompts = self.imagen.generate_all_prompts(item)
-
-        await self.app.bot.send_message(
-            chat_id,
-            f"🎨 *Image Prompts for Draft #{item.id}*\n\n"
-            "_Copy these to Gemini (nano banana mode)_",
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-        await asyncio.sleep(0.3)
-
-        persona_info = [
-            ("pro", "💼 PRO", "Clean professional style"),
-            ("work", "📊 WORK", "Dark trading terminal style"),
-            ("degen", "🔥 DEGEN", "Cyberpunk glitch style"),
-        ]
-
-        for key, label, style in persona_info:
-            prompt = prompts.get(key)
-            if prompt:
+            for prefix, label, emoji in _PERSONA_DISPLAY:
+                await asyncio.sleep(0.3)
+                content = getattr(item, f"{prefix}_content")
+                if not content:
+                    continue
                 await self.app.bot.send_message(
                     chat_id,
-                    f"{label}\n_{style}_\n\n"
-                    f"`{prompt.copy_paste_prompt}`",
+                    f"{emoji} *{label}*\n\n`{content}`",
                     parse_mode=ParseMode.MARKDOWN
                 )
-                await asyncio.sleep(0.3)
 
-    async def notify_new_drafts(self, count: int):
-        """Send notification about new drafts"""
-        if self.app and self.allowed_chat_ids:
-            for chat_id in self.allowed_chat_ids:
-                try:
+            await asyncio.sleep(0.3)
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ Approve", callback_data=f"approve_{item.id}"),
+                    InlineKeyboardButton("❌ Reject", callback_data=f"reject_{item.id}"),
+                ],
+                [
+                    InlineKeyboardButton("🎨 Prompts", callback_data=f"prompts_{item.id}"),
+                    InlineKeyboardButton("📤 Posted", callback_data=f"posted_{item.id}"),
+                ]
+            ]
+
+            await self.app.bot.send_message(
+                chat_id,
+                "*Actions:*",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.error(f"Failed to send draft #{item.id}: {e}")
+
+    async def _send_draft_preview(self, chat_id: int, result):
+        try:
+            await self.app.bot.send_message(
+                chat_id,
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🧪 *Draft Preview (not queued)*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📰 {truncate(result.content_pack.get('source_topic', ''), 100)}\n"
+                f"🔎 Run: `{result.run_id}`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            for prefix, label, emoji in _PERSONA_DISPLAY:
+                draft = result.per_persona.get(prefix)
+                if not draft:
+                    continue
+                await asyncio.sleep(0.2)
+                await self.app.bot.send_message(
+                    chat_id,
+                    f"{emoji} *{label}*\n\n`{draft.content}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        except Exception as e:
+            logger.error(f"Failed to send draft preview: {e}")
+
+    async def _send_prompts(self, chat_id: int, item):
+        try:
+            prompts = self.imagen.generate_all_prompts(item)
+
+            await self.app.bot.send_message(
+                chat_id,
+                f"🎨 *Image Prompts for Draft #{item.id}*\n\n"
+                "_Copy these to Gemini (nano banana mode)_",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+            for prefix, label, emoji in _PERSONA_DISPLAY:
+                prompt = prompts.get(prefix)
+                if prompt:
+                    await asyncio.sleep(0.3)
+                    style_desc = self.imagen.STYLES[prefix]["style"].capitalize()
                     await self.app.bot.send_message(
                         chat_id,
-                        f"🔔 *{count} new draft(s) ready for review!*\n\n"
-                        f"Use /next to start reviewing",
+                        f"{emoji} *{label}*\n_{style_desc}_\n\n"
+                        f"`{prompt.copy_paste_prompt}`",
                         parse_mode=ParseMode.MARKDOWN
                     )
-                except Exception as e:
-                    logger.error(f"Failed to notify chat {chat_id}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to send prompts for #{item.id}: {e}")
 
     def run(self):
-        """Start the bot"""
         self.app = Application.builder().token(self.token).build()
 
-        # Add command handlers
         self.app.add_handler(CommandHandler("start", self.start))
         self.app.add_handler(CommandHandler("help", self.start))
+        self.app.add_handler(CommandHandler("personas", self.personas))
         self.app.add_handler(CommandHandler("status", self.status))
         self.app.add_handler(CommandHandler("pending", self.pending))
+        self.app.add_handler(CommandHandler("queue", self.queue_list))
         self.app.add_handler(CommandHandler("next", self.next_draft))
         self.app.add_handler(CommandHandler("prompts", self.prompts))
         self.app.add_handler(CommandHandler("approve", self.approve))
         self.app.add_handler(CommandHandler("reject", self.reject))
         self.app.add_handler(CommandHandler("posted", self.posted))
         self.app.add_handler(CommandHandler("react", self.react))
-
-        # Add callback handler for inline buttons
+        self.app.add_handler(CommandHandler("generate", self.generate))
+        self.app.add_handler(CommandHandler("style", self.style))
+        self.app.add_handler(CommandHandler("batch", self.batch))
+        self.app.add_handler(CommandHandler("dryrun", self.dryrun))
+        self.app.add_handler(CommandHandler("export", self.export))
+        self.app.add_handler(CommandHandler("trends", self.trends))
         self.app.add_handler(CallbackQueryHandler(self.callback))
 
         logger.info("Starting Telegram bot...")
         self.app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
-async def send_notification(message: str):
-    """
-    One-off notification (for use from cron jobs).
-
-    Usage:
-        import asyncio
-        from src.bot import send_notification
-        asyncio.run(send_notification("🔔 New drafts ready!"))
-    """
+async def send_notification(message: str, chat_ids: Optional[List[int]] = None):
+    """Send a one-off Telegram notification."""
     token = get_env("TELEGRAM_BOT_TOKEN")
-    chat_ids = get_env("TELEGRAM_CHAT_ID", "").split(",")
+    if chat_ids is None:
+        chat_ids = []
+        raw = get_env("TELEGRAM_CHAT_ID", "")
+        if raw:
+            chat_ids = [int(cid.strip()) for cid in raw.split(",") if cid.strip()]
 
     bot = Bot(token=token)
 
     for chat_id in chat_ids:
         try:
             await bot.send_message(
-                int(chat_id.strip()),
+                int(chat_id),
                 message,
                 parse_mode=ParseMode.MARKDOWN
             )
         except Exception as e:
             logger.error(f"Failed to send notification to {chat_id}: {e}")
-
-
-# Alias for convenience
-notify = send_notification
 
 
 if __name__ == "__main__":

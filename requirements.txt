@@ -1,27 +1,32 @@
 # Core
-google-genai>=1.0.0
-requests>=2.31.0
-feedparser>=6.0.10
-python-dotenv>=1.0.0
+google-genai==1.47.0
+requests==2.32.5
+feedparser==6.0.12
+python-dotenv==1.2.1
 
-# Database (PostgreSQL for Railway, SQLite for local)
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.9
+# Database
+sqlalchemy==2.0.46
+psycopg2-binary==2.9.11
 
 # Web Dashboard
-fastapi>=0.109.0
-uvicorn>=0.27.0
-jinja2>=3.1.0
-python-multipart>=0.0.6
+fastapi==0.128.0
+uvicorn==0.39.0
+jinja2==3.1.6
+python-multipart==0.0.20
 
 # Telegram Bot
-python-telegram-bot>=20.7
+python-telegram-bot==22.5
 
 # Utilities
-pydantic>=2.5.0
-httpx>=0.26.0
-schedule>=1.2.0
+pydantic==2.12.5
+httpx==0.28.1
+schedule==1.2.2
+# YAML persona configs
+pyyaml==6.0.2
+# Google Sheets export (optional)
+google-api-python-client==2.160.0
+google-auth==2.38.0
 
 # Testing
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
+pytest==8.4.2
+pytest-asyncio==1.2.0

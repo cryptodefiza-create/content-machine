@@ -1,34 +1,29 @@
-"""Pytest fixtures and configuration"""
+"""Pytest fixtures"""
 import os
 import sys
 import pytest
 from pathlib import Path
 
-# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# Set test environment
 os.environ.setdefault("ENVIRONMENT", "test")
 
 
 @pytest.fixture
 def test_db_url(tmp_path):
-    """Provide a temporary SQLite database URL"""
     db_path = tmp_path / "test_content.db"
     return f"sqlite:///{db_path}"
 
 
 @pytest.fixture
 def queue_manager(test_db_url):
-    """Provide a QueueManager with test database"""
     from src.queue import QueueManager
     return QueueManager(db_url=test_db_url)
 
 
 @pytest.fixture
 def sample_topic():
-    """Provide a sample topic for testing"""
     from src.utils import generate_content_hash
     return {
         "type": "news",
@@ -42,7 +37,6 @@ def sample_topic():
 
 @pytest.fixture
 def sample_content(sample_topic):
-    """Provide sample generated content for testing"""
     return {
         "content_hash": sample_topic["content_hash"],
         "content_type": sample_topic["type"],
@@ -77,7 +71,6 @@ def sample_content(sample_topic):
 
 @pytest.fixture
 def sample_kol_post():
-    """Provide a sample KOL post for QT testing"""
     return {
         "username": "vitalikbuterin",
         "content": "Privacy is normal. Privacy is not suspicious.",

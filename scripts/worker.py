@@ -6,72 +6,47 @@ Runs as single Railway service
 import os
 import sys
 import time
-import asyncio
 import threading
-import schedule
-import logging
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.scanner import Scanner
-from src.brain import Brain
-from src.queue import QueueManager
-from src.bot import ContentBot, notify
+import schedule
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
-log = logging.getLogger(__name__)
-
-scanner = Scanner()
-brain = Brain()
-queue = QueueManager()
+from scripts.cron_runner import ContentScanner
+from src.bot import ContentBot
+from src.utils import logger
 
 
-def run_scan():
-    """Scan for content and generate drafts"""
-    log.info("Starting scan...")
-    try:
-        items = scanner.scan_all(max_items=6)
-        processed = 0
-        for item in items:
-            if queue.content_exists(item["content_hash"]):
-                continue
-            content = brain.generate_content(item)
-            if content:
-                queue.add_content(content)
-                processed += 1
-                log.info(f"   Generated: {item['topic'][:40]}...")
-            time.sleep(2)
-        log.info(f"Scan complete: {processed} new drafts")
-        if processed > 0:
-            asyncio.run(notify(f"*{processed} new drafts ready!*\n\nUse /next to review"))
-    except Exception as e:
-        log.error(f"Scan failed: {e}")
-
-
-def run_scheduler():
+def run_scheduler(scanner: ContentScanner):
     """Run scheduler in background thread"""
-    log.info("Scheduler: 08:00, 14:00, 19:00")
-    schedule.every().day.at("08:00").do(run_scan)
-    schedule.every().day.at("14:00").do(run_scan)
-    schedule.every().day.at("19:00").do(run_scan)
+    logger.info("Scheduler (UTC+2): scans 08/12/15, summary 16:30, expiry 00")
+    schedule.every().day.at("06:00").do(scanner.run_scan)
+    schedule.every().day.at("10:00").do(scanner.run_scan)
+    schedule.every().day.at("13:00").do(scanner.run_scan)
+    schedule.every().day.at("14:30").do(scanner.run_summary)
+    schedule.every().day.at("22:00").do(scanner.run_expire)
     while True:
         schedule.run_pending()
         time.sleep(60)
 
 
 def main():
-    log.info("Content Machine starting...")
+    logger.info("Content Machine starting...")
 
-    # Initial scan
-    run_scan()
+    scanner = ContentScanner()
+
+    try:
+        scanner.run_scan()
+    except Exception as e:
+        logger.error(f"Initial scan failed: {e}")
 
     # Start scheduler in background
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread = threading.Thread(target=run_scheduler, args=(scanner,), daemon=True)
     scheduler_thread.start()
-    log.info("Scheduler running")
+    logger.info("Scheduler running")
 
     # Start Telegram bot (blocking)
-    log.info("Starting Telegram bot...")
+    logger.info("Starting Telegram bot...")
     bot = ContentBot()
     bot.run()
 

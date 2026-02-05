@@ -1,8 +1,7 @@
-"""Multi-source content scanner with rate limiting and retry logic"""
+"""Multi-source content scanner with rate limiting and retry"""
 import requests
-import feedparser
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import time
 import random
@@ -11,7 +10,6 @@ from .utils import get_env, load_config, generate_content_hash, logger
 
 
 def deduplicate(items: List[Dict], key: str = "topic") -> List[Dict]:
-    """Remove duplicates by key, preserving order"""
     seen = set()
     result = []
     for item in items:
@@ -23,20 +21,13 @@ def deduplicate(items: List[Dict], key: str = "topic") -> List[Dict]:
 
 
 class Scanner:
-    """
-    Content scanner with robust rate limiting.
-
-    Rate limits:
-    - CoinGecko: 10-30 calls/min (free tier)
-    - NewsAPI: 100 requests/day (free tier)
-    - RSS: No limits (be polite)
-    """
 
     def __init__(self):
         self.news_api_key = get_env("NEWS_API_KEY", "")
         self.sources = self._load_sources()
+        self.source_weights = self.sources.get("source_weights", {})
+        self.trend_keywords = [k.lower() for k in self.sources.get("trend_keywords", [])]
 
-        # Rate limiting from config or defaults
         rate_config = self.sources.get("rate_limits", {})
         self.delays = {
             "coingecko": rate_config.get("coingecko_delay_seconds", 2.0),
@@ -46,31 +37,6 @@ class Scanner:
         self.max_retries = rate_config.get("max_retries", 3)
         self.retry_backoff = rate_config.get("backoff_multiplier", 2.0)
 
-    def _load_sources(self) -> dict:
-        """Load sources config with fallback defaults"""
-        try:
-            return load_config("sources.json")
-        except FileNotFoundError:
-            logger.warning("sources.json not found, using defaults")
-            return self._default_sources()
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"Invalid sources.json: {e}")
-            return self._default_sources()
-
-    def _default_sources(self) -> dict:
-        """Default sources if config missing"""
-        return {
-            "rss_feeds": [
-                {
-                    "name": "CoinDesk",
-                    "url": "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
-                    "priority": 1
-                }
-            ],
-            "news_queries": ["crypto privacy", "defi"],
-            "rate_limits": {}
-        }
-
     def _request_with_retry(
         self,
         url: str,
@@ -78,22 +44,22 @@ class Scanner:
         source_type: str = "default",
         timeout: int = 15
     ) -> requests.Response:
-        """HTTP request with retry and exponential backoff"""
         delay = self.delays.get(source_type, 1.0)
         last_exception = None
 
         for attempt in range(self.max_retries):
             try:
-                # Jitter to prevent thundering herd
                 jitter = random.uniform(0, 0.5)
                 time.sleep(delay + jitter)
 
                 response = requests.get(url, params=params, timeout=timeout)
 
-                # Handle rate limiting
                 if response.status_code == 429:
                     retry_after = int(response.headers.get("Retry-After", 60))
                     logger.warning(f"Rate limited by {source_type}. Waiting {retry_after}s")
+                    last_exception = requests.HTTPError(
+                        f"429 Too Many Requests from {source_type}", response=response
+                    )
                     time.sleep(retry_after)
                     continue
 
@@ -112,8 +78,38 @@ class Scanner:
 
         raise last_exception
 
+    def _load_sources(self) -> dict:
+        try:
+            return load_config("sources.json")
+        except FileNotFoundError:
+            logger.error("sources.json not found; scanner will use minimal defaults")
+            sources = self._default_sources()
+            sources["_fallback"] = True
+            return sources
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Invalid sources.json; scanner will use minimal defaults: {e}")
+            sources = self._default_sources()
+            sources["_fallback"] = True
+            return sources
+
+    @staticmethod
+    def _default_sources() -> dict:
+        return {
+            "rss_feeds": [
+                {
+                    "name": "CoinDesk",
+                    "url": "https://feeds.feedburner.com/CoinDesk",
+                    "fallback_url": None,
+                    "priority": 1
+                }
+            ],
+            "news_queries": ["crypto privacy", "defi"],
+            "rate_limits": {},
+            "source_weights": {"CoinDesk": 1.1},
+            "trend_keywords": ["privacy", "upgrade", "hack", "airdrop", "zk"]
+        }
+
     def get_trending_coins(self, limit: int = 5) -> List[Dict]:
-        """Fetch trending coins from CoinGecko"""
         logger.info("Fetching trending coins from CoinGecko")
 
         try:
@@ -138,6 +134,7 @@ class Scanner:
                             "name": name,
                             "market_cap_rank": coin.get("market_cap_rank"),
                         },
+                        "published_at": datetime.now(timezone.utc).isoformat(),
                         "url": f"https://www.coingecko.com/en/coins/{coin.get('id')}"
                     })
 
@@ -149,7 +146,6 @@ class Scanner:
             return []
 
     def get_news_articles(self, limit: int = 5) -> List[Dict]:
-        """Fetch news from NewsAPI"""
         if not self.news_api_key:
             logger.warning("NEWS_API_KEY not set, skipping news fetch")
             return []
@@ -157,7 +153,6 @@ class Scanner:
         logger.info("Fetching news from NewsAPI")
         articles = []
 
-        # Only use first 2 queries to stay within rate limits
         for query in self.sources.get("news_queries", [])[:2]:
             try:
                 response = self._request_with_retry(
@@ -175,19 +170,19 @@ class Scanner:
                 data = response.json()
 
                 if data.get("status") == "error":
-                    error_msg = data.get("message", "Unknown error")
-                    logger.warning(f"NewsAPI error for '{query}': {error_msg}")
+                    logger.warning(f"NewsAPI error for '{query}': {data.get('message', 'Unknown error')}")
                     continue
 
                 for article in data.get("articles", []):
                     title = article.get("title", "")
-                    # Skip removed/empty titles
                     if title and title != "[Removed]" and len(title) > 10:
+                        published = article.get("publishedAt")
                         articles.append({
                             "type": "news",
                             "source": article.get("source", {}).get("name", "Unknown"),
                             "topic": title,
                             "details": {"description": article.get("description", "")},
+                            "published_at": published,
                             "url": article.get("url")
                         })
 
@@ -199,18 +194,22 @@ class Scanner:
         return unique[:limit]
 
     def _parse_rss_date(self, entry) -> Optional[datetime]:
-        """Safely parse RSS entry date"""
         try:
             if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                return datetime(*entry.published_parsed[:6])
+                return datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
             if hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                return datetime(*entry.updated_parsed[:6])
+                return datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
         except (TypeError, ValueError):
             pass
         return None
 
     def _fetch_rss_feed(self, feed_config: dict) -> List[Dict]:
-        """Fetch single RSS feed with fallback URL support"""
+        try:
+            import feedparser  # type: ignore
+        except Exception:
+            logger.warning("feedparser not installed, skipping RSS fetch")
+            return []
+
         urls_to_try = [feed_config["url"]]
         if feed_config.get("fallback_url"):
             urls_to_try.append(feed_config["fallback_url"])
@@ -220,27 +219,27 @@ class Scanner:
                 time.sleep(self.delays["rss"])
                 feed = feedparser.parse(url)
 
-                # Check if parse failed
                 if feed.bozo and not feed.entries:
                     logger.warning(f"RSS parse failed for {feed_config['name']}: {feed.bozo_exception}")
                     continue
 
                 articles = []
-                cutoff = datetime.now() - timedelta(hours=24)
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
                 for entry in feed.entries[:5]:
-                    # Skip old entries
                     published = self._parse_rss_date(entry)
                     if published and published < cutoff:
                         continue
 
                     title = entry.get("title", "").strip()
                     if title and len(title) > 10:
+                        published = self._parse_rss_date(entry)
                         articles.append({
                             "type": "news",
                             "source": feed_config["name"],
                             "topic": title,
                             "details": {"description": entry.get("summary", "")[:500]},
+                            "published_at": published.isoformat() if published else None,
                             "url": entry.get("link")
                         })
 
@@ -254,10 +253,8 @@ class Scanner:
         return []
 
     def get_rss_feeds(self, limit: int = 5) -> List[Dict]:
-        """Fetch from RSS feeds, sorted by priority"""
         logger.info("Fetching RSS feeds")
 
-        # Sort feeds by priority (lower = higher priority)
         feeds = sorted(
             self.sources.get("rss_feeds", []),
             key=lambda x: x.get("priority", 99)
@@ -265,31 +262,47 @@ class Scanner:
 
         articles = []
         for feed_config in feeds:
-            feed_articles = self._fetch_rss_feed(feed_config)
-            articles.extend(feed_articles)
+            articles.extend(self._fetch_rss_feed(feed_config))
 
         unique = deduplicate(articles, key="topic")
         logger.info(f"Found {len(unique)} unique RSS articles")
         return unique[:limit]
 
     def scan_all(self, max_items: int = 10) -> List[Dict]:
-        """Full scan across all sources"""
         logger.info("Starting full content scan")
 
         all_items = []
-
-        # Fetch from all sources
         all_items.extend(self.get_trending_coins(limit=3))
         all_items.extend(self.get_news_articles(limit=4))
         all_items.extend(self.get_rss_feeds(limit=4))
 
-        # Add content hash for deduplication
         for item in all_items:
             item["content_hash"] = generate_content_hash(item["topic"])
-            item["scanned_at"] = datetime.utcnow().isoformat()
+            item["scanned_at"] = datetime.now(timezone.utc).isoformat()
+            item["trend_score"] = self._score_item(item)
 
-        # Final deduplication across all sources
         unique_items = deduplicate(all_items, key="content_hash")
-
+        unique_items.sort(key=lambda x: x.get("trend_score", 0), reverse=True)
         logger.info(f"Scan complete: {len(unique_items)} unique items from {len(all_items)} total")
         return unique_items[:max_items]
+
+    def _score_item(self, item: Dict) -> float:
+        now = datetime.now(timezone.utc)
+        published_at = item.get("published_at")
+        hours = 24.0
+        try:
+            if published_at:
+                published_dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                delta = now - published_dt
+                hours = max(0.1, delta.total_seconds() / 3600.0)
+        except Exception:
+            hours = 24.0
+
+        recency_score = max(0.0, 1.0 - (hours / 48.0))
+        source = item.get("source", "")
+        weight = float(self.source_weights.get(source, 1.0))
+        topic = (item.get("topic") or "").lower()
+        keyword_hits = sum(1 for k in self.trend_keywords if k in topic)
+        keyword_boost = min(0.5, keyword_hits * 0.05)
+        type_boost = 0.1 if item.get("type") == "trend" else 0.0
+        return round((recency_score + keyword_boost + type_boost) * weight, 4)

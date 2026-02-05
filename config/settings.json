@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "personas_path": "config/personas_v2.json",
+  "llm": {
+    "provider": "gemini",
+    "model": "gemini-2.0-flash-lite",
+    "temperature": 0.8,
+    "max_output_tokens": 900
+  },
+  "pipeline": {
+    "stages": ["SCOUT", "IDEATE", "STYLE_TRANSFER", "HOT_TAKE", "DRAFT", "QUALITY_CHECK", "QUEUE"],
+    "quality_min_score": 7.0,
+    "max_revision_passes": 1
+  },
+  "cache": {
+    "enabled": true,
+    "ttl_seconds": 604800,
+    "max_entries": 5000
+  },
+  "dedupe": {
+    "enabled": true,
+    "threshold": 0.82,
+    "window_hours": 24
+  },
+  "rate_limit": {
+    "min_delay_seconds": 5.0,
+    "max_retries": 3,
+    "backoff_seconds": 12.0
+  },
+  "costs": {
+    "prompt_per_1k_tokens": 0.15,
+    "completion_per_1k_tokens": 0.60,
+    "currency": "USD"
+  },
+  "runtime": {
+    "dry_run": false
+  },
+  "exports": {
+    "enabled": true,
+    "format": "both",
+    "export_dir": "data/exports",
+    "master_csv": true,
+    "master_csv_path": "data/exports/all_runs.csv"
+  }
+}

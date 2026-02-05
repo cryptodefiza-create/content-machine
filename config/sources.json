@@ -2,8 +2,8 @@
   "rss_feeds": [
     {
       "name": "CoinDesk",
-      "url": "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
-      "fallback_url": "https://www.coindesk.com/feed",
+      "url": "https://feeds.feedburner.com/CoinDesk",
+      "fallback_url": null,
       "priority": 1
     },
     {
@@ -23,6 +23,42 @@
       "url": "https://cointelegraph.com/rss",
       "fallback_url": null,
       "priority": 2
+    },
+    {
+      "name": "DL News",
+      "url": "https://www.dlnews.com/rss/",
+      "fallback_url": null,
+      "priority": 2
+    },
+    {
+      "name": "Messari",
+      "url": "https://messari.io/rss",
+      "fallback_url": null,
+      "priority": 3
+    },
+    {
+      "name": "Bankless",
+      "url": "https://www.bankless.com/rss.xml",
+      "fallback_url": null,
+      "priority": 3
+    },
+    {
+      "name": "Paradigm",
+      "url": "https://paradigm.xyz/rss",
+      "fallback_url": null,
+      "priority": 3
+    },
+    {
+      "name": "Ethereum Blog",
+      "url": "https://blog.ethereum.org/en/rss.xml",
+      "fallback_url": null,
+      "priority": 3
+    },
+    {
+      "name": "Solana Blog",
+      "url": "https://solana.com/news/rss.xml",
+      "fallback_url": null,
+      "priority": 3
     }
   ],
   "news_queries": [
@@ -39,5 +75,39 @@
     "rss_delay_seconds": 0.5,
     "max_retries": 3,
     "backoff_multiplier": 2
-  }
+  },
+  "source_weights": {
+    "CoinDesk": 1.2,
+    "The Block": 1.2,
+    "Decrypt": 1.1,
+    "Cointelegraph": 1.0,
+    "DL News": 1.1,
+    "Messari": 1.1,
+    "Bankless": 1.0,
+    "Paradigm": 1.2,
+    "Ethereum Blog": 1.2,
+    "Solana Blog": 1.1,
+    "NewsAPI": 1.0,
+    "CoinGecko": 0.9
+  },
+  "trend_keywords": [
+    "sec",
+    "etf",
+    "airdrop",
+    "hack",
+    "exploit",
+    "upgrade",
+    "mainnet",
+    "testnet",
+    "zks",
+    "zk",
+    "privacy",
+    "bridge",
+    "layer 2",
+    "l2",
+    "stablecoin",
+    "treasury",
+    "funding",
+    "launch"
+  ]
 }

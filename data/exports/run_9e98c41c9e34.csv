@@ -1,0 +1,2 @@
+run_id,persona,text,thread_part_index,thread_total,is_thread,angle,hook,cta,quality_score,source_topic,source_url,content_type,status,created_at
+9e98c41c9e34,pro,pro draft with a hook?,1,1,False,Angle,Hook?,What do you think?,8.0,Test topic,,manual,dry_run,2026-02-05T12:16:35.799955+00:00
