@@ -161,6 +161,12 @@ async def logout(request: Request):
     return response
 
 
+@app.get("/health")
+async def health():
+    ok = queue.ping()
+    return {"status": "ok" if ok else "degraded", "db": ok}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     _require_auth(request)

@@ -19,7 +19,7 @@ from src.utils import logger
 
 def run_scheduler(scanner: ContentScanner):
     """Run scheduler in background thread"""
-    logger.info("Scheduler (UTC+2): scans 08/12/15, summary 16:30, expiry 00")
+    logger.info("Scheduler (UTC): scans 06/10/13, summary+trends 14:30, expiry 22:00")
     schedule.every().day.at("06:00").do(scanner.run_scan)
     schedule.every().day.at("10:00").do(scanner.run_scan)
     schedule.every().day.at("13:00").do(scanner.run_scan)

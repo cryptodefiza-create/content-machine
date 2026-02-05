@@ -4,6 +4,7 @@ import json
 import hashlib
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,23 @@ logging.basicConfig(
     datefmt='%Y-%m-%dT%H:%M:%S'
 )
 logger = logging.getLogger("content-machine")
+
+
+class _RedactFilter(logging.Filter):
+    _token_pattern = re.compile(r"bot\\d+:[A-Za-z0-9_-]+")
+
+    def __init__(self, token: str = ""):
+        super().__init__()
+        self._token = token
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = str(record.getMessage())
+        msg = self._token_pattern.sub("bot<redacted>", msg)
+        if self._token:
+            msg = msg.replace(self._token, "<redacted>")
+        record.msg = msg
+        record.args = ()
+        return True
 
 # Optional file logging
 _log_file = os.getenv("LOG_FILE")
@@ -32,6 +50,11 @@ if _log_file:
             logger.addHandler(_handler)
     except Exception:
         pass
+
+# Apply redaction filter to root + app logger
+_redact = _RedactFilter(os.getenv("TELEGRAM_BOT_TOKEN", ""))
+logging.getLogger().addFilter(_redact)
+logger.addFilter(_redact)
 
 
 def get_env(key: str, default: Optional[str] = None) -> str:
