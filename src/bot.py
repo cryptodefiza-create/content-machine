@@ -1,6 +1,8 @@
 """Telegram bot for content approval"""
 import asyncio
 import time
+import os
+import atexit
 from typing import Optional, List
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
@@ -12,7 +14,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from .utils import get_env, truncate, logger, generate_content_hash
+from .utils import get_env, truncate, logger, generate_content_hash, get_project_root
 from .queue import QueueManager, ContentStatus
 from .brain import Brain
 from .imagen import ImagePromptGenerator
@@ -51,6 +53,7 @@ class ContentBot:
         self.last_react_time = 0
         self.react_cooldown = 30
         self.settings = load_settings()
+        self._lock_path = None
 
     @property
     def brain(self) -> Brain:
@@ -659,6 +662,9 @@ class ContentBot:
             logger.error(f"Failed to send prompts for #{item.id}: {e}")
 
     def run(self):
+        if not self._acquire_lock():
+            logger.error("Another bot instance is already running. Exiting.")
+            return
         self.app = Application.builder().token(self.token).build()
 
         self.app.add_handler(CommandHandler("start", self.start))
@@ -683,6 +689,27 @@ class ContentBot:
 
         logger.info("Starting Telegram bot...")
         self.app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    def _acquire_lock(self) -> bool:
+        root = get_project_root()
+        lock_path = root / "data" / "bot.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w") as f:
+                f.write(str(os.getpid()))
+            self._lock_path = lock_path
+            atexit.register(self._release_lock)
+            return True
+        except FileExistsError:
+            return False
+
+    def _release_lock(self):
+        if self._lock_path and self._lock_path.exists():
+            try:
+                self._lock_path.unlink()
+            except Exception:
+                pass
 
 
 async def send_notification(message: str, chat_ids: Optional[List[int]] = None):

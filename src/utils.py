@@ -3,6 +3,7 @@ import os
 import json
 import hashlib
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,21 @@ logging.basicConfig(
     datefmt='%Y-%m-%dT%H:%M:%S'
 )
 logger = logging.getLogger("content-machine")
+
+# Optional file logging
+_log_file = os.getenv("LOG_FILE")
+if _log_file:
+    try:
+        Path(_log_file).parent.mkdir(parents=True, exist_ok=True)
+        _handler = logging.FileHandler(_log_file)
+        _handler.setFormatter(logging.Formatter(
+            '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "module": "%(module)s", "message": "%(message)s"}',
+            datefmt='%Y-%m-%dT%H:%M:%S'
+        ))
+        if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+            logger.addHandler(_handler)
+    except Exception:
+        pass
 
 
 def get_env(key: str, default: Optional[str] = None) -> str:
