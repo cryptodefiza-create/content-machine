@@ -36,6 +36,10 @@ class ContentScanner:
                 ))
             except Exception as e:
                 logger.error(f"Failed to send fallback notification: {e}")
+        try:
+            asyncio.run(self.send_health_alert())
+        except Exception as e:
+            logger.error(f"Failed to send health alert: {e}")
 
     def shutdown(self, signum, frame):
         logger.info("Shutting down scheduler...")
@@ -161,6 +165,21 @@ class ContentScanner:
         except Exception as e:
             logger.error(f"Failed to send trend digest: {e}")
 
+    async def send_health_alert(self):
+        chat_ids = self._health_chat_ids()
+        if not chat_ids:
+            return
+        try:
+            db_ok = self.queue.ping()
+        except Exception:
+            db_ok = False
+        msg = (
+            "🩺 *Health Check*\n\n"
+            f"DB: {'ok' if db_ok else 'down'}\n"
+            "Scheduler: running"
+        )
+        await send_notification(msg, chat_ids=chat_ids)
+
     def _digest_chat_ids(self):
         raw = get_env("TREND_DIGEST_CHAT_ID", "")
         if not raw:
@@ -169,6 +188,16 @@ class ContentScanner:
             return [int(cid.strip()) for cid in raw.split(",") if cid.strip()]
         except ValueError:
             logger.error("Invalid TREND_DIGEST_CHAT_ID format")
+            return None
+
+    def _health_chat_ids(self):
+        raw = get_env("HEALTH_ALERT_CHAT_ID", "")
+        if not raw:
+            return None
+        try:
+            return [int(cid.strip()) for cid in raw.split(",") if cid.strip()]
+        except ValueError:
+            logger.error("Invalid HEALTH_ALERT_CHAT_ID format")
             return None
 
     async def expire_old_drafts(self):

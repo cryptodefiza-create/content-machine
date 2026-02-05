@@ -103,6 +103,7 @@ Single source of truth: `config/settings.json`
 - Daily combo message (summary + trends) at 14:30 (server time)
 - Health check endpoint: `/health`
 - Health endpoint auth: set `HEALTH_SECRET` and pass `X-Health-Token` header
+- Optional Telegram health alert: set `HEALTH_ALERT_CHAT_ID` to receive startup health status
 - Optional digest override: set `TREND_DIGEST_CHAT_ID` to send to a specific chat
 
 ## Tests
