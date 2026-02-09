@@ -604,7 +604,7 @@ class ContentBot:
                     continue
                 await self.app.bot.send_message(
                     chat_id,
-                    f"{emoji} *{label}*\n\n`{content}`",
+                    f"{emoji} *{label}*\n\n`{content}`\n{self._format_source_url(item.source_url)}",
                     parse_mode=ParseMode.MARKDOWN
                 )
 
@@ -650,7 +650,7 @@ class ContentBot:
                 await asyncio.sleep(0.2)
                 await self.app.bot.send_message(
                     chat_id,
-                    f"{emoji} *{label}*\n\n`{draft.content}`",
+                    f"{emoji} *{label}*\n\n`{draft.content}`\n{self._format_source_url(source_url)}",
                     parse_mode=ParseMode.MARKDOWN
                 )
         except Exception as e:
