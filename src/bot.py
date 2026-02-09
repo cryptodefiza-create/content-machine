@@ -685,7 +685,7 @@ class ContentBot:
     def _format_source_url(url: Optional[str]) -> str:
         if not url:
             return "🔗 Source: _none_"
-        return f"🔗 Source: [{ContentBot._short_domain(url)}]({url})"
+        return f"🔗 Source: [{ContentBot._short_domain(url)}]({url})\n{url}"
 
     @staticmethod
     def _short_domain(url: str) -> str:
