@@ -17,7 +17,7 @@ from src.runtime_config import get_dry_run
 from src.settings import load_settings
 from src.queue import QueueManager
 from src.bot import send_notification
-from src.utils import logger, truncate
+from src.utils import logger, truncate, get_env
 
 
 class ContentScanner:

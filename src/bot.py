@@ -706,73 +706,83 @@ class ContentBot:
 def _strip_http(url: str) -> str:
     return url.replace("https://", "").replace("http://", "")
 
-    def run(self):
-        if not self._acquire_lock():
-            logger.error("Another bot instance is already running. Exiting.")
-            return
-        self.app = Application.builder().token(self.token).build()
 
-        self.app.add_handler(CommandHandler("start", self.start))
-        self.app.add_handler(CommandHandler("help", self.start))
-        self.app.add_handler(CommandHandler("personas", self.personas))
-        self.app.add_handler(CommandHandler("status", self.status))
-        self.app.add_handler(CommandHandler("pending", self.pending))
-        self.app.add_handler(CommandHandler("queue", self.queue_list))
-        self.app.add_handler(CommandHandler("next", self.next_draft))
-        self.app.add_handler(CommandHandler("prompts", self.prompts))
-        self.app.add_handler(CommandHandler("approve", self.approve))
-        self.app.add_handler(CommandHandler("reject", self.reject))
-        self.app.add_handler(CommandHandler("posted", self.posted))
-        self.app.add_handler(CommandHandler("react", self.react))
-        self.app.add_handler(CommandHandler("generate", self.generate))
-        self.app.add_handler(CommandHandler("style", self.style))
-        self.app.add_handler(CommandHandler("batch", self.batch))
-        self.app.add_handler(CommandHandler("dryrun", self.dryrun))
-        self.app.add_handler(CommandHandler("export", self.export))
-        self.app.add_handler(CommandHandler("trends", self.trends))
-        self.app.add_handler(CommandHandler("health", self.health))
-        self.app.add_handler(CallbackQueryHandler(self.callback))
+def _run(self):
+    if not self._acquire_lock():
+        logger.error("Another bot instance is already running. Exiting.")
+        return
+    self.app = Application.builder().token(self.token).build()
 
-        logger.info("Starting Telegram bot...")
-        self.app.run_polling(allowed_updates=Update.ALL_TYPES)
+    self.app.add_handler(CommandHandler("start", self.start))
+    self.app.add_handler(CommandHandler("help", self.start))
+    self.app.add_handler(CommandHandler("personas", self.personas))
+    self.app.add_handler(CommandHandler("status", self.status))
+    self.app.add_handler(CommandHandler("pending", self.pending))
+    self.app.add_handler(CommandHandler("queue", self.queue_list))
+    self.app.add_handler(CommandHandler("next", self.next_draft))
+    self.app.add_handler(CommandHandler("prompts", self.prompts))
+    self.app.add_handler(CommandHandler("approve", self.approve))
+    self.app.add_handler(CommandHandler("reject", self.reject))
+    self.app.add_handler(CommandHandler("posted", self.posted))
+    self.app.add_handler(CommandHandler("react", self.react))
+    self.app.add_handler(CommandHandler("generate", self.generate))
+    self.app.add_handler(CommandHandler("style", self.style))
+    self.app.add_handler(CommandHandler("batch", self.batch))
+    self.app.add_handler(CommandHandler("dryrun", self.dryrun))
+    self.app.add_handler(CommandHandler("export", self.export))
+    self.app.add_handler(CommandHandler("trends", self.trends))
+    self.app.add_handler(CommandHandler("health", self.health))
+    self.app.add_handler(CallbackQueryHandler(self.callback))
 
-    def _acquire_lock(self) -> bool:
-        root = get_project_root()
-        lock_path = root / "data" / "bot.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        if lock_path.exists():
-            try:
-                pid_text = lock_path.read_text().strip()
-                if pid_text.isdigit():
-                    pid = int(pid_text)
-                    if not self._pid_alive(pid):
-                        lock_path.unlink()
-            except Exception:
-                pass
+    logger.info("Starting Telegram bot...")
+    self.app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+def _acquire_lock(self) -> bool:
+    root = get_project_root()
+    lock_path = root / "data" / "bot.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.exists():
         try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            with os.fdopen(fd, "w") as f:
-                f.write(str(os.getpid()))
-            self._lock_path = lock_path
-            atexit.register(self._release_lock)
-            return True
-        except FileExistsError:
-            return False
-
-    def _release_lock(self):
-        if self._lock_path and self._lock_path.exists():
-            try:
-                self._lock_path.unlink()
-            except Exception:
-                pass
-
-    @staticmethod
-    def _pid_alive(pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-            return True
+            pid_text = lock_path.read_text().strip()
+            if pid_text.isdigit():
+                pid = int(pid_text)
+                if not self._pid_alive(pid):
+                    lock_path.unlink()
         except Exception:
-            return False
+            pass
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w") as f:
+            f.write(str(os.getpid()))
+        self._lock_path = lock_path
+        atexit.register(self._release_lock)
+        return True
+    except FileExistsError:
+        return False
+
+
+def _release_lock(self):
+    if self._lock_path and self._lock_path.exists():
+        try:
+            self._lock_path.unlink()
+        except Exception:
+            pass
+
+
+@staticmethod
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+ContentBot.run = _run
+ContentBot._acquire_lock = _acquire_lock
+ContentBot._release_lock = _release_lock
+ContentBot._pid_alive = _pid_alive
 
 
 async def send_notification(message: str, chat_ids: Optional[List[int]] = None):

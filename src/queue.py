@@ -113,6 +113,8 @@ class QueueManager:
 
                 for stmt in migrations:
                     conn.execute(text(stmt))
+                if migrations:
+                    conn.commit()
         except Exception as e:
             logger.warning(f"Column migration skipped: {e}")
 
