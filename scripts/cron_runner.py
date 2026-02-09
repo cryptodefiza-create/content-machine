@@ -78,23 +78,23 @@ class ContentScanner:
             logger.info(f"Scan complete: {processed} new, {skipped} skipped")
 
             try:
-                if get_dry_run(default_dry_run=load_settings()[\"runtime\"].get(\"dry_run\", False)):
+                if get_dry_run(default_dry_run=load_settings()["runtime"].get("dry_run", False)):
                     await send_notification(
-                        f\"🧪 *Dry run scan complete*\\n\\n\"
-                        f\"0 queued (dry run), {len(items)} scanned\"
+                        f"🧪 *Dry run scan complete*\n\n"
+                        f"0 queued (dry run), {len(items)} scanned"
                     )
                 elif processed > 0:
                     await send_notification(
-                        f\"📬 *{processed} new draft(s) ready!*\\n\\n\"
-                        f\"Use /next to start reviewing\"
+                        f"📬 *{processed} new draft(s) ready!*\n\n"
+                        f"Use /next to start reviewing"
                     )
                 else:
                     await send_notification(
-                        f\"📡 *Scan complete*\\n\\n\"
-                        f\"0 new drafts ({skipped} skipped, {len(items)} scanned)\"
+                        f"📡 *Scan complete*\n\n"
+                        f"0 new drafts ({skipped} skipped, {len(items)} scanned)"
                     )
             except Exception as e:
-                logger.error(f\"Failed to send scan notification: {e}\")
+                logger.error(f"Failed to send scan notification: {e}")
 
             return processed
 
