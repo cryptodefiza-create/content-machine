@@ -163,7 +163,7 @@ class ContentBot:
 
         msg = f"📝 *{len(items)} Pending Drafts*\n\n"
         for item in items:
-            msg += f"*#{item.id}* - {truncate(item.source_topic, 45)}\n"
+            msg += f"*#{item.id}* - {truncate(item.source_topic, 45)} {self._short_source(item.source_url)}\n"
         msg += "\n_Use /next to review first draft_"
 
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
@@ -592,7 +592,8 @@ class ContentBot:
                 f"📝 *Draft #{item.id}*\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"📰 {truncate(item.source_topic, 100)}\n"
-                f"🔎 Run: `{item.run_id or 'n/a'}`",
+                f"🔎 Run: `{item.run_id or 'n/a'}`\n"
+                f"{self._format_source_url(item.source_url)}",
                 parse_mode=ParseMode.MARKDOWN
             )
 
@@ -631,13 +632,15 @@ class ContentBot:
 
     async def _send_draft_preview(self, chat_id: int, result):
         try:
+            source_url = result.content_pack.get("source_url") if result.content_pack else ""
             await self.app.bot.send_message(
                 chat_id,
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🧪 *Draft Preview (not queued)*\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"📰 {truncate(result.content_pack.get('source_topic', ''), 100)}\n"
-                f"🔎 Run: `{result.run_id}`",
+                f"🔎 Run: `{result.run_id}`\n"
+                f"{self._format_source_url(source_url)}",
                 parse_mode=ParseMode.MARKDOWN
             )
             for prefix, label, emoji in _PERSONA_DISPLAY:
@@ -677,6 +680,31 @@ class ContentBot:
                     )
         except Exception as e:
             logger.error(f"Failed to send prompts for #{item.id}: {e}")
+
+    @staticmethod
+    def _format_source_url(url: Optional[str]) -> str:
+        if not url:
+            return "🔗 Source: _none_"
+        return f"🔗 Source: [{ContentBot._short_domain(url)}]({url})"
+
+    @staticmethod
+    def _short_domain(url: str) -> str:
+        from urllib.parse import urlparse
+        try:
+            host = urlparse(url).hostname or ""
+            return host.replace("www.", "")
+        except Exception:
+            return "source"
+
+    @staticmethod
+    def _short_source(url: Optional[str]) -> str:
+        if not url:
+            return ""
+        return f"({_strip_http(url)})"
+
+
+def _strip_http(url: str) -> str:
+    return url.replace("https://", "").replace("http://", "")
 
     def run(self):
         if not self._acquire_lock():
