@@ -98,7 +98,10 @@ class LLMClient:
         if cleaned.startswith("```"):
             cleaned = cleaned.strip("`")
         cleaned = cleaned.strip()
-        return json.loads(cleaned)
+        data = json.loads(cleaned)
+        if isinstance(data, list):
+            data = data[0] if len(data) == 1 and isinstance(data[0], dict) else {"items": data}
+        return data
 
     def _record_usage(self, stage: str, persona: str, prompt: str, completion: str, cached: bool):
         if self.tracker is None:
